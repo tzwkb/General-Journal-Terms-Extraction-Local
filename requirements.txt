@@ -5,10 +5,9 @@ PyPDF2==3.0.1  # 备用PDF处理
 # 其他文档格式
 python-docx==0.8.11  # DOCX文档处理
 
-# OCR功能（用于扫描版PDF和图片）
-paddleocr>=2.8.0  # PaddleOCR PP-OCRv5
-paddlepaddle>=2.6.0  # PaddlePaddle框架
-Pillow>=10.0.0  # 图片处理库（PaddleOCR需要）
+# OCR功能（用于扫描版PDF）- 科大讯飞
+requests>=2.31.0  # HTTP客户端，用于调用讯飞OCR API
+Pillow>=10.0.0  # 图片处理库（可选）
 
 # 文件类型检测（可选）
 python-magic==0.4.27

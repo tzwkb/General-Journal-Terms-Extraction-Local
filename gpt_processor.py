@@ -782,7 +782,6 @@ class GPTProcessor:
                     # 处理时间
                     created_time = ""
                     if result.get('created'):
-                        from datetime import datetime
                         created_time = datetime.fromtimestamp(result['created']).strftime("%Y-%m-%d %H:%M:%S")
                     
                     # 支持双语格式
@@ -1393,7 +1392,8 @@ def _save_intermediate_text(file_path: str, text: str):
 def load_texts_from_file(file_path: str, 
                         chunk_size: Optional[int] = None,
                         use_smart_splitter: bool = True,
-                        overlap_size: int = 200) -> List[str]:
+                        overlap_size: int = 200,
+                        enable_ocr: bool = True) -> List[str]:
     """
     从文件加载文本并进行智能分割
     
@@ -1402,6 +1402,7 @@ def load_texts_from_file(file_path: str,
         chunk_size: 分块大小（字符数），None表示不分块
         use_smart_splitter: 是否使用智能分割器
         overlap_size: 重叠大小（字符数）
+        enable_ocr: 是否启用OCR功能（用于扫描版PDF和图片）
         
     Returns:
         分割后的文本列表
@@ -1411,7 +1412,7 @@ def load_texts_from_file(file_path: str,
     import os
     
     # 加载文件内容
-    processor = FileProcessor()
+    processor = FileProcessor(enable_ocr=enable_ocr)
     
     try:
         if file_path.endswith('.pdf'):

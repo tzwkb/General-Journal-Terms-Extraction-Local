@@ -13,8 +13,8 @@ from typing import List, Dict, Any
 # =============================================================================
 
 # OpenAI API配置
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")  # 支持自定义API端点
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-mU6afVlo8m1nykBk6c8f7f0496574eF8B13584EaB885346d")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.ai-gaochao.cn/v1")
 
 # 模型配置
 DEFAULT_MODEL = "gpt-4o"
@@ -64,7 +64,7 @@ BATCH_CONFIG = {
 }
 
 # =============================================================================
-# PDF OCR处理配置
+# PDF OCR处理配置 - 科大讯飞
 # =============================================================================
 
 PDF_OCR_CONFIG = {
@@ -74,6 +74,21 @@ PDF_OCR_CONFIG = {
     "enable_batch_processing": True,  # 是否启用分批处理功能
     "max_retries": 3,             # 单个批次失败时的最大重试次数
     "retry_delay": 2,             # 重试之间的延迟（秒）
+}
+
+# 科大讯飞OCR配置
+XUNFEI_OCR_CONFIG = {
+    # 从环境变量读取，或在这里直接设置（不推荐）
+    "app_id": os.getenv("XUNFEI_APP_ID", "your-xunfei-app-id"),  # 讯飞开放平台AppID
+    "secret": os.getenv("XUNFEI_SECRET", "your-xunfei-secret"),  # 讯飞开放平台Secret
+    
+    # OCR任务配置
+    "export_format": "txt",  # 导出格式：txt, word, markdown, json
+    "max_wait_time": 300,    # 最大等待时间（秒）
+    "check_interval": 5,     # 状态检查间隔（秒）
+    
+    # 是否启用OCR功能
+    "enabled": True,  # True=启用科大讯飞OCR, False=禁用
 }
 
 # =============================================================================
@@ -86,7 +101,7 @@ EXTRACTION_MODE = {
 }
 
 # 系统提示词
-SYSTEM_PROMPT = """You are a senior navigation and motion control terminology extraction specialist with extensive expertise in aerospace guidance, inertial navigation, control systems, and robotics. Your mission is to extract precise technical terminology from navigation and control systems documentation, building comprehensive bilingual/multilingual terminology databases with maximum accuracy."""
+SYSTEM_PROMPT = """You are a senior unmanned aircraft systems (UAS/UAV) terminology extraction specialist with extensive expertise in unmanned aerial vehicles, aviation systems, flight control, communications, payloads, and aerospace standards. Your mission is to extract precise technical terminology from UAS/UAV documentation and standards, building comprehensive bilingual terminology databases with maximum accuracy and adherence to international aviation terminology standards."""
 
 def get_user_prompt(text: str, bilingual: bool = True) -> str:
     """
@@ -100,73 +115,50 @@ def get_user_prompt(text: str, bilingual: bool = True) -> str:
         str: 格式化的用户提示词模板
     """
     if bilingual:
-        # 双语模式 - 导航与运动控制专用
-        return f"""Extract comprehensive bilingual terminology from navigation and motion control systems documentation to build a professional terminology database. Focus on navigation, guidance, control systems, inertial sensors, and aerospace engineering terminology.
+        # 双语模式 - 无人驾驶航空器系统专用  
+        return f"""Extract bilingual UAS/UAV terminology from GB/T 38152-2019 standard.
 
-BILINGUAL EXTRACTION STANDARDS:
+DOCUMENT STRUCTURE:
+- GB/T national standard for Unmanned Aircraft System (UAS) terminology
+- Format: Section number (e.g., 2.1, 3.2.1, 7.1.5) + Chinese term + English term + definition
+- Example: "3.2.1  无人驾驶航空器  unmanned aircraft  A powered aircraft that does not carry a human operator..."
 
-CRITICAL: Each term must include BOTH English and Chinese versions:
-- If the source text is in English/Russian: provide the original term + accurate Chinese translation
-- If the source text is in Chinese: provide the Chinese term + English translation
-- For acronyms: include full expansion (e.g., "INS, Inertial Navigation System" + "惯性导航系统")
-- For Russian terms (if present): transliterate and provide English/Chinese equivalents
-- For proper nouns/model names: transliterate if no standard translation exists
+EXTRACTION RULES:
+- Extract BOTH Chinese and English for each term
+- For acronyms: include full form (e.g., "UAS, Unmanned Aircraft System" / "无人驾驶航空器系统")
+- Extract UAS/UAV terminology: aircraft types, operations, control, communications, payloads, launch/recovery, airspace, personnel, safety
 
-Standardize similar terms (merge variants into the most precise or official form)
-Extract domain-specific technical terms related to navigation, control, aerospace, and robotics
-Avoid overly generic terms unless they have specific technical significance in navigation/control
-Prioritize standard terminology used in IEEE, AIAA, and international aerospace standards
-
-OUTPUT FORMAT - Strict JSON structure with BILINGUAL fields:
+JSON OUTPUT:
 {{{{
   "terms": [
     {{{{
-      "eng_term": "English term with full expansion for acronyms (include Russian if present)",
-      "zh_term": "中文术语及缩写的完整展开"
+      "eng_term": "English term (expand acronyms)",
+      "zh_term": "中文术语（展开缩写）"
     }}}}
   ]
 }}}}
-
-QUALITY VALIDATION CHECKLIST:
-✓ EVERY term has BOTH eng_term and zh_term fields (mandatory)
-✓ English terms follow standard navigation/control terminology conventions
-✓ Chinese translations use commonly accepted aerospace/control engineering terms
-✓ Abbreviations include full expanded form in both languages
-✓ No duplicate terms (merge similar entries - prefer precise/official forms)
-✓ Terms are relevant to navigation, guidance, control, or motion systems
 
 TEXT TO PROCESS:
 {text}"""
     else:
-        # 单语模式 - 导航与运动控制专用
-        return f"""Extract comprehensive navigation and motion control terminology from the provided text to build a professional terminology database. Focus on navigation systems, guidance, control theory, and aerospace engineering terms.
+        # 单语模式 - 无人驾驶航空器系统专用
+        return f"""Extract UAS/UAV terminology from GB/T standard documents.
 
-PROFESSIONAL EXTRACTION STANDARDS:
+DOCUMENT FORMAT: GB/T terminology standard with numbered sections.
 
-For acronyms: 
-Include both abbreviated and expanded forms when available (e.g., "惯性测量单元 (IMU, Inertial Measurement Unit)" or "卡尔曼滤波 (Kalman Filter)")
+EXTRACTION RULES:
+- Extract UAS/UAV technical terms
+- For acronyms: include full form (e.g., "UAS (Unmanned Aircraft System)" or "视距内运行 (VLOS)")
+- Focus: aircraft types, operations, control, communications, payloads, launch/recovery, airspace
 
-Standardize similar terms (merge variants into the most precise or official form)
-Extract domain-specific technical terms related to navigation, control, aerospace, and robotics
-Avoid overly generic terms unless they have specific technical significance in navigation/control
-Prioritize standard terminology used in IEEE, AIAA, and international aerospace standards
-For Chinese texts, provide Chinese terms; for English/Russian texts, provide the original term
-
-OUTPUT FORMAT - Strict JSON structure:
+JSON OUTPUT:
 {{{{
   "terms": [
     {{{{
-      "term": "Exact term as extracted from text (with full expansion for acronyms)"
+      "term": "Term (expand acronyms)"
     }}}}
   ]
 }}}}
-
-QUALITY VALIDATION CHECKLIST:
-✓ Each term is relevant to navigation, guidance, control, or motion systems
-✓ No duplicate terms (merge similar entries - prefer precise/official forms)
-✓ Abbreviations include full expanded form when possible
-✓ Terms accurately reflect the content and domain of the source text
-✓ Terms follow standard navigation/control engineering conventions
 
 TEXT TO PROCESS:
 {text}"""

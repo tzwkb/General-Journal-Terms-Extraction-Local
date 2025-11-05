@@ -47,11 +47,19 @@ class DependencyManager:
         else:
             self.available_modules['magic'] = []
         
-        # OCR功能 - 使用PaddleOCR
-        if importlib.util.find_spec('paddleocr'):
-            self.available_modules['ocr'] = ['paddleocr']
+        # OCR功能 - 使用科大讯飞
+        # 检查requests库和xunfei_ocr模块
+        has_requests = importlib.util.find_spec('requests') is not None
+        has_xunfei_module = importlib.util.find_spec('xunfei_ocr') is not None
+        
+        if has_requests and has_xunfei_module:
+            self.available_modules['ocr'] = ['xunfei']
         else:
             self.available_modules['ocr'] = []
+            if not has_requests:
+                logger.warning("OCR功能需要requests库，请安装: pip install requests")
+            if not has_xunfei_module:
+                logger.warning("未找到xunfei_ocr模块")
         
         self._log_dependencies()
     
@@ -183,27 +191,39 @@ class PlainTextExtractor(TextExtractor):
 
 
 class PDFExtractor(TextExtractor):
-    """PDF文本提取器 - 基于pdfminer.six，支持OCR降级"""
+    """PDF文本提取器 - 支持纯文本提取或直接OCR"""
     
     def __init__(self, enable_ocr: bool = True, use_gpu: bool = False):
         """
         初始化PDF提取器
         
         Args:
-            enable_ocr: 是否启用OCR降级功能
-            use_gpu: 是否使用GPU加速（仅在需要OCR时生效）
+            enable_ocr: 是否使用OCR模式（True=直接OCR, False=仅纯文本提取）
+            use_gpu: 是否使用GPU加速（仅在OCR模式时生效）
         """
         self.enable_ocr = enable_ocr
         self.use_gpu = use_gpu
         self.ocr_extractor = None  # 延迟初始化，只在需要时创建
         logger.debug(f"PDFExtractor初始化: enable_ocr={enable_ocr}, use_gpu={use_gpu}")
+        
+        if enable_ocr:
+            logger.info("📋 PDF处理模式: 直接使用OCR")
+        else:
+            logger.info("📋 PDF处理模式: 仅纯文本提取")
     
     def extract(self, file_path: str) -> List[str]:
-        """提取PDF文件内容，自动降级到OCR"""
+        """提取PDF文件内容"""
+        # 如果启用了OCR，直接使用OCR处理
+        if self.enable_ocr:
+            logger.info(f"🔍 使用OCR模式处理PDF: {Path(file_path).name}")
+            return self._extract_with_ocr(file_path)
+        
+        # 否则使用纯文本提取
         if not deps.is_available('pdf'):
             raise RuntimeError("PDF处理库不可用，请安装 pdfminer.six")
         
-        # 优先使用pdfminer.six（主要方法）
+        logger.info(f"📄 使用纯文本提取模式处理PDF: {Path(file_path).name}")
+        # 优先使用pdfminer.six
         if 'pdfminer.six' in deps.available_modules['pdf']:
             return self._extract_with_pdfminer(file_path)
         else:
@@ -211,7 +231,7 @@ class PDFExtractor(TextExtractor):
             return self._extract_with_pypdf2(file_path)
     
     def _extract_with_pdfminer(self, file_path: str) -> List[str]:
-        """使用pdfminer.six提取PDF文本"""
+        """使用pdfminer.six提取PDF文本（纯文本模式，不降级到OCR）"""
         try:
             from pdfminer.high_level import extract_text
             from pdfminer.layout import LAParams
@@ -234,27 +254,12 @@ class PDFExtractor(TextExtractor):
             # 检查提取的文本质量
             text_stripped = full_text.strip() if full_text else ""
             
-            # 如果文本为空、太短，或只有元数据，尝试OCR降级
-            is_scanned = False
+            # 纯文本模式：如果提取失败就直接报错，不降级
             if not full_text or not text_stripped:
-                is_scanned = True
-                reason = "PDF为空"
-            elif len(text_stripped) < 200:  # 文本太短，可能只有元数据
-                is_scanned = True
-                reason = f"提取文本太短（{len(text_stripped)}字符），可能是扫描版"
-            elif "[General Information]" in text_stripped and len(text_stripped) < 500:
-                is_scanned = True
-                reason = "只提取到元数据信息"
-            
-            if is_scanned:
-                logger.warning(f"检测到扫描版PDF: {Path(file_path).name} - {reason}")
-                
-                # 如果启用了OCR功能，自动降级到OCR
-                if self.enable_ocr:
-                    logger.info("自动降级到OCR处理...")
-                    return self._extract_with_ocr(file_path)
-                else:
-                    raise ValueError("扫描版PDF需要OCR处理，但OCR功能未启用")
+                raise ValueError("PDF为空或无文本内容（可能是扫描版PDF，请启用OCR功能）")
+            elif len(text_stripped) < 200:
+                logger.warning(f"提取文本较短（{len(text_stripped)}字符），可能是扫描版PDF")
+                logger.warning("建议启用OCR功能以获得更好的提取效果")
             
             # 智能文本后处理
             full_text = re.sub(r'([a-z])([A-Z])', r'\1 \2', full_text)  # 小写后跟大写
@@ -263,7 +268,7 @@ class PDFExtractor(TextExtractor):
             full_text = re.sub(r'([A-Za-z])(\d)', r'\1 \2', full_text)  # 字母后跟数字
             full_text = re.sub(r'\s+', ' ', full_text)  # 清理多余空格
             
-            # 直接返回处理后的文本，不添加文件名标题
+            # 直接返回处理后的文本
             texts = [full_text.strip()]
             logger.info(f"使用pdfminer.six成功提取: {len(full_text)} 字符")
             return texts
@@ -271,16 +276,12 @@ class PDFExtractor(TextExtractor):
         except Exception as e:
             logger.error(f"pdfminer.six提取失败: {e}")
             
-            # 检查是否应该降级到OCR
-            if "扫描版" in str(e) or "需要OCR" in str(e):
-                if self.ocr_extractor:
-                    logger.info("pdfminer失败，自动降级到OCR处理...")
-                    return self._extract_with_ocr(file_path)
-            
-            # 简单回退策略
+            # 尝试PyPDF2备用
             if 'PyPDF2' in deps.available_modules['pdf']:
+                logger.info("尝试使用PyPDF2备用方案...")
                 return self._extract_with_pypdf2(file_path)
-            raise ValueError(f"PDF文件处理失败: {e}")
+            
+            raise ValueError(f"PDF文件处理失败: {e}\n提示: 如果是扫描版PDF，请启用OCR功能")
     
     def _get_pdf_page_count(self, file_path: str) -> int:
         """获取PDF页数"""
@@ -299,20 +300,29 @@ class PDFExtractor(TextExtractor):
             logger.info(f"使用OCR处理PDF: {Path(file_path).name}")
             logger.warning("注意: 大型扫描版PDF的OCR处理需要较长时间")
             
-            # 懒加载：只在需要OCR时才初始化PaddleOCR
+            # 懒加载：只在需要OCR时才初始化科大讯飞OCR
             if self.ocr_extractor is None:
                 if not self.enable_ocr:
                     raise ValueError("OCR功能未启用")
                 
                 if not deps.is_available('ocr'):
-                    raise ValueError("OCR库不可用，请安装: pip install paddleocr paddlepaddle")
+                    raise ValueError("OCR库不可用，请确保已安装requests库和配置讯飞API")
                 
-                logger.info("🔄 正在初始化PaddleOCR引擎（首次使用需要加载模型）...")
+                logger.info("🔄 正在初始化科大讯飞OCR引擎...")
                 try:
-                    self.ocr_extractor = PaddleOCRExtractor(use_gpu=self.use_gpu)
-                    logger.info("✅ PaddleOCR初始化完成")
+                    from xunfei_ocr import XunfeiOCRExtractor
+                    from config import XUNFEI_OCR_CONFIG
+                    
+                    app_id = XUNFEI_OCR_CONFIG.get('app_id')
+                    secret = XUNFEI_OCR_CONFIG.get('secret')
+                    
+                    if not app_id or not secret or app_id == 'your-xunfei-app-id':
+                        raise ValueError("请在config.py中配置科大讯飞的 app_id 和 secret")
+                    
+                    self.ocr_extractor = XunfeiOCRExtractor(app_id=app_id, secret=secret)
+                    logger.info("✅ 科大讯飞OCR初始化完成")
                 except Exception as init_error:
-                    logger.error(f"❌ PaddleOCR初始化失败: {init_error}")
+                    logger.error(f"❌ 科大讯飞OCR初始化失败: {init_error}")
                     raise ValueError(f"无法初始化OCR引擎: {init_error}")
             
             # 检查文件大小和页数
@@ -747,163 +757,13 @@ class ImageExtractorWrapper(TextExtractor):
     
     def extract(self, file_path: str) -> List[str]:
         """提取图片文本（懒加载OCR）"""
-        # 只在首次使用时初始化PaddleOCR
-        if self.ocr_extractor is None:
-            logger.info("🔄 正在初始化PaddleOCR引擎（首次使用需要加载模型）...")
-            self.ocr_extractor = PaddleOCRExtractor(use_gpu=self.use_gpu)
-            logger.info("✅ PaddleOCR初始化完成")
-        
-        return self.ocr_extractor.extract(file_path)
-
-
-class PaddleOCRExtractor(TextExtractor):
-    """PaddleOCR文本提取器 - PP-OCRv5"""
-    
-    def __init__(self, use_gpu: bool = False):
-        """
-        初始化PaddleOCR提取器
-        
-        Args:
-            use_gpu: 是否使用GPU加速
-        """
-        if not deps.is_available('ocr') or 'paddleocr' not in deps.available_modules['ocr']:
-            raise RuntimeError("PaddleOCR不可用，请安装 paddleocr")
-        
-        try:
-            from paddleocr import PaddleOCR
-            import os
-            
-            # 设置环境变量以减少警告和优化内存
-            os.environ.setdefault('FLAGS_allocator_strategy', 'auto_growth')
-            
-            # 初始化PaddleOCR（使用3.x正确API）
-            print("🔧 初始化PaddleOCR引擎（v3.x）...")
-            # 禁用一些功能以提高稳定性和速度
-            self.ocr = PaddleOCR(
-                use_doc_orientation_classify=False,  # 禁用文档方向分类
-                use_doc_unwarping=False,             # 禁用文档矫正（减少内存）
-                use_textline_orientation=False       # 禁用文本行方向检测
-            )
-            print("✅ PaddleOCR引擎初始化完成")
-            logger.info(f"PaddleOCR初始化成功（v3.x API）")
-            
-        except Exception as e:
-            logger.error(f"PaddleOCR初始化失败: {e}")
-            logger.error("请确保已正确安装PaddleOCR: pip install paddleocr paddlepaddle")
-            raise RuntimeError(f"PaddleOCR初始化失败: {e}")
-    
-    def extract(self, file_path: str) -> List[str]:
-        """从图片或PDF提取文本"""
-        try:
-            file_ext = Path(file_path).suffix.lower()
-            
-            # 检查是否是PDF文件
-            if file_ext == '.pdf':
-                logger.info("检测到PDF文件，PaddleOCR将逐页处理")
-                return self._extract_from_pdf(file_path)
-            else:
-                # 图片文件
-                return self._extract_from_image(file_path)
-            
-        except Exception as e:
-            logger.error(f"PaddleOCR提取失败: {e}")
-            raise ValueError(f"OCR处理失败: {e}")
-    
-    def _extract_from_image(self, file_path: str) -> List[str]:
-        """从图片提取文本"""
-        # 执行OCR识别（PaddleOCR 3.x API）
-        result = self.ocr.predict(input=file_path)
-        
-        # PaddleOCR 3.x 返回的是可迭代的结果对象
-        if not result:
-            raise ValueError("图片中未检测到文本")
-        
-        # 从result中提取文本（按照3.x API）
-        texts = []
-        try:
-            # result是可迭代对象，每个res有text属性
-            for res in result:
-                if hasattr(res, 'text'):
-                    texts.append(res.text)
-                else:
-                    logger.warning(f"结果对象没有text属性: {type(res)}")
-            
-            if texts:
-                full_text = '\n'.join(texts)
-            else:
-                # 降级方案：尝试直接转换
-                full_text = str(result)
-                
-        except Exception as e:
-            logger.error(f"解析OCR结果失败: {e}, 结果类型: {type(result)}")
-            raise ValueError(f"OCR结果解析失败: {e}")
-        
-        if not full_text or not full_text.strip():
-            raise ValueError("图片中未检测到有效文本")
-        
-        logger.info(f"PaddleOCR成功提取文本，长度: {len(full_text)} 字符")
-        return [f"[图片OCR - {Path(file_path).name}]\n{full_text.strip()}"]
-    
-    def _extract_from_pdf(self, file_path: str) -> List[str]:
-        """从PDF文件提取文本（逐页OCR）"""
-        try:
-            import time
-            logger.info(f"开始OCR处理PDF: {Path(file_path).name}")
-            logger.info("这可能需要较长时间，请耐心等待...")
-            
-            start_time = time.time()
-            
-            # PaddleOCR 3.x支持直接处理PDF
-            logger.info("正在调用PaddleOCR引擎...")
-            try:
-                result = self.ocr.predict(input=file_path)
-                logger.info(f"PaddleOCR处理完成，耗时: {time.time() - start_time:.2f}秒")
-            except KeyboardInterrupt:
-                logger.warning("用户中断OCR处理")
-                raise
-            except Exception as ocr_error:
-                logger.error(f"PaddleOCR处理时出错: {type(ocr_error).__name__}: {ocr_error}")
-                raise RuntimeError(f"PaddleOCR处理失败: {ocr_error}")
-            
-            if not result:
-                raise ValueError("PDF中未检测到文本")
-            
-            # 从result中提取文本（PaddleOCR 3.x API）
-            try:
-                logger.info(f"正在解析OCR结果，类型: {type(result)}")
-                
-                # result是可迭代对象（每页一个结果）
-                all_texts = []
-                for page_idx, res in enumerate(result):
-                    logger.info(f"处理第{page_idx + 1}页...")
-                    if hasattr(res, 'text'):
-                        all_texts.append(f"[第{page_idx + 1}页]\n{res.text}")
-                    else:
-                        logger.warning(f"第{page_idx + 1}页结果对象没有text属性: {type(res)}")
-                
-                if not all_texts:
-                    raise ValueError("PDF所有页面均未检测到文本")
-                
-                full_text = '\n\n'.join(all_texts)
-                logger.info(f"成功提取{len(all_texts)}页文本")
-                
-            except Exception as e:
-                logger.error(f"解析PDF OCR结果失败: {e}, 结果类型: {type(result)}")
-                raise ValueError(f"PDF OCR结果解析失败: {e}")
-            
-            if not full_text or not full_text.strip():
-                raise ValueError("PDF中未检测到有效文本")
-            
-            total_time = time.time() - start_time
-            logger.info(f"PaddleOCR成功处理PDF，提取{len(full_text)}字符，总耗时: {total_time:.2f}秒")
-            return [f"[扫描版PDF - {Path(file_path).name}]\n{full_text}"]
-            
-        except Exception as e:
-            logger.error(f"PaddleOCR处理PDF失败: {e}")
-            logger.error(f"错误详情: {type(e).__name__}: {str(e)}")
-            logger.error(f"建议: 对于大型扫描版PDF，可以先用专门工具转换为文本文件")
-            raise
-
+        # 科大讯飞OCR仅支持PDF格式
+        logger.warning("科大讯飞OCR当前仅支持PDF文件")
+        raise ValueError(
+            f"科大讯飞OCR暂不支持单独的图片文件。\n"
+            f"请将图片转换为PDF格式后再处理。\n"
+            f"文件: {Path(file_path).name}"
+        )
 
 # =============================================================================
 # 主文件处理器
@@ -912,14 +772,16 @@ class PaddleOCRExtractor(TextExtractor):
 class FileProcessor:
     """统一文件处理器"""
     
-    def __init__(self, use_gpu: bool = False):
+    def __init__(self, use_gpu: bool = False, enable_ocr: bool = True):
         """
         初始化文件处理器
         
         Args:
             use_gpu: 是否使用GPU加速OCR（PaddleOCR支持）
+            enable_ocr: 是否启用OCR功能（用于扫描版PDF和图片）
         """
         self.use_gpu = use_gpu
+        self.enable_ocr = enable_ocr
         self.extractors = self._init_extractors()
     
     def _init_extractors(self) -> Dict[str, TextExtractor]:
@@ -930,17 +792,23 @@ class FileProcessor:
         
         # PDF提取器（支持懒加载OCR）
         if deps.is_available('pdf'):
-            enable_ocr = deps.is_available('ocr')
+            # 只有在用户启用OCR且OCR库可用时才启用OCR
+            ocr_available = deps.is_available('ocr')
+            enable_ocr = self.enable_ocr and ocr_available
+            
             logger.info(f"📄 初始化PDF提取器: OCR={'启用' if enable_ocr else '禁用'}, GPU={'启用' if self.use_gpu else '禁用'}")
             extractors['pdf'] = PDFExtractor(enable_ocr=enable_ocr, use_gpu=self.use_gpu)
+            
             if enable_ocr:
                 logger.info("✅ PDF提取器已启用OCR降级功能（懒加载模式）")
+            elif self.enable_ocr and not ocr_available:
+                logger.warning("⚠️  用户启用了OCR但PaddleOCR未安装，OCR功能不可用")
             else:
-                logger.warning("⚠️  PDF提取器OCR功能未启用（PaddleOCR未安装）")
+                logger.info("ℹ️  PDF提取器OCR功能已禁用（用户选择）")
         
         # 图片OCR提取器（懒加载，只在直接处理图片时初始化）
-        # 这里不立即初始化，而是在ImageExtractorWrapper中懒加载
-        if deps.is_available('ocr'):
+        # 只有在用户启用OCR且OCR库可用时才添加
+        if self.enable_ocr and deps.is_available('ocr'):
             extractors['image'] = ImageExtractorWrapper(use_gpu=self.use_gpu)
         
         if deps.is_available('docx'):

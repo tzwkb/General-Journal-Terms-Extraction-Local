@@ -30,14 +30,15 @@ logger = logging.getLogger(__name__)
 class BatchFileExtractor:
     """批量文件提取器"""
     
-    def __init__(self, tesseract_path: Optional[str] = None):
+    def __init__(self, enable_ocr: bool = True, use_gpu: bool = False):
         """
         初始化批量提取器
         
         Args:
-            tesseract_path: Tesseract OCR路径（用于图片处理）
+            enable_ocr: 是否启用OCR功能（用于扫描版PDF和图片）
+            use_gpu: 是否使用GPU加速OCR
         """
-        self.processor = FileProcessor(tesseract_path)
+        self.processor = FileProcessor(use_gpu=use_gpu, enable_ocr=enable_ocr)
         self.stats = {
             "total_files": 0,
             "success_count": 0,
@@ -360,13 +361,17 @@ def main():
     parser.add_argument("--file", "-f", help="处理单个文件")
     parser.add_argument("--overwrite", action="store_true",
                        help="覆盖已存在的文件")
-    parser.add_argument("--tesseract-path", help="Tesseract OCR可执行文件路径")
+    parser.add_argument("--disable-ocr", action="store_true",
+                       help="禁用OCR功能（跳过扫描版PDF和图片）")
+    parser.add_argument("--use-gpu", action="store_true",
+                       help="使用GPU加速OCR（需要PaddlePaddle GPU版本）")
     parser.add_argument("--info", action="store_true", help="显示处理器信息")
     
     args = parser.parse_args()
     
     # 创建提取器
-    extractor = BatchFileExtractor(args.tesseract_path)
+    enable_ocr = not args.disable_ocr  # 默认启用，除非用户明确禁用
+    extractor = BatchFileExtractor(enable_ocr=enable_ocr, use_gpu=args.use_gpu)
     
     # 显示处理器信息
     if args.info:

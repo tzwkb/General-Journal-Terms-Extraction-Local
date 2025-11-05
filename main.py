@@ -30,6 +30,8 @@ class TermExtractionApp:
     def __init__(self):
         self.api_key = None
         self.processor = None
+        self.enable_ocr = True  # 默认启用OCR
+        self.use_gpu = False    # 默认不使用GPU
         
     # =============================================================================
     # API密钥管理
@@ -128,6 +130,63 @@ class TermExtractionApp:
         
         print(f"✅ 使用 {len(sample_texts)} 个示例文本")
         return sample_texts
+    
+    # =============================================================================
+    # OCR配置
+    # =============================================================================
+    
+    def configure_ocr(self) -> Tuple[bool, bool]:
+        """
+        配置OCR选项
+        
+        Returns:
+            Tuple[bool, bool]: (enable_ocr, use_gpu)
+        """
+        print("\n🔧 OCR功能配置")
+        print("=" * 50)
+        
+        # 检查OCR是否可用
+        try:
+            from file_processor import deps
+            ocr_available = deps.is_available('ocr')
+        except:
+            ocr_available = False
+        
+        if not ocr_available:
+            print("⚠️  科大讯飞OCR未配置，OCR功能不可用")
+            print("💡 提示: 若需要处理扫描版PDF，请:")
+            print("   1. 安装依赖: pip install requests")
+            print("   2. 在config.py中配置讯飞API密钥")
+            print("\n将使用纯文本提取模式（仅支持可复制的PDF）")
+            return False, False
+        
+        print("✅ 科大讯飞OCR已配置，可使用OCR功能")
+        print("\n📋 OCR功能说明:")
+        print("  • 启用OCR: 可处理扫描版PDF文件")
+        print("  • 禁用OCR: 仅提取可复制文本的PDF/DOCX")
+        print("  • 推荐: 对于标准文档（GB/T标准等），启用OCR以兼容扫描版")
+        print("  • 注意: 当前仅支持PDF格式的OCR识别")
+        
+        while True:
+            choice = input("\n是否启用OCR功能? (Y/n, 默认Y): ").strip().lower()
+            
+            if choice in ['', 'y', 'yes', '是']:
+                enable_ocr = True
+                print("✅ 已启用OCR功能")
+                break
+            elif choice in ['n', 'no', '否']:
+                enable_ocr = False
+                print("ℹ️  已禁用OCR功能")
+                return False, False
+            else:
+                print("❌ 无效输入，请输入 y 或 n")
+        
+        # 科大讯飞OCR是云端API，不需要GPU配置
+        use_gpu = False  # 云端API不需要本地GPU
+        
+        print(f"\n📊 OCR配置完成: 启用科大讯飞云端OCR")
+        print("ℹ️  说明: 科大讯飞OCR使用云端API，无需本地GPU配置")
+        return enable_ocr, use_gpu
     
     # =============================================================================
     # 文件处理
@@ -395,7 +454,8 @@ class TermExtractionApp:
                 str(file_path), 
                 chunk_size=chunk_size,
                 use_smart_splitter=use_smart_splitter,
-                overlap_size=overlap_size
+                overlap_size=overlap_size,
+                enable_ocr=self.enable_ocr
             )
             
             # 智能分割器已经在内部添加了文件标识，这里不需要重复添加
@@ -741,28 +801,31 @@ class TermExtractionApp:
         
         print("✅ API密钥设置成功")
         
-        # 2. 检查断点续传
+        # 2. 配置OCR选项
+        self.enable_ocr, self.use_gpu = self.configure_ocr()
+        
+        # 3. 检查断点续传
         if self.check_and_handle_checkpoints():
             return
         
-        # 3. 选择提取模式（单语/双语）- 在获取文本之前选择
+        # 4. 选择提取模式（单语/双语）- 在获取文本之前选择
         bilingual = self.select_extraction_mode()
         
-        # 4. 获取输入文本
+        # 5. 获取输入文本
         texts = self.get_input_texts()
         if not texts:
             print("❌ 没有输入文本，程序退出")
             return
         
-        # 5. 选择模型
+        # 6. 选择模型
         model = self.select_model()
         print(f"✅ 选择模型: {model}")
         
-        # 6. 运行批处理（只进行抽取，不保存最终结果）
+        # 7. 运行批处理（只进行抽取，不保存最终结果）
         results = self.run_batch_processing(texts, model, bilingual)
         
         if results:
-            # 7. 抽取完成后，选择输出格式并支持重复选择
+            # 8. 抽取完成后，选择输出格式并支持重复选择
             source_files = self._extract_source_files(texts)
             generated_files = self.handle_output_generation(results, source_files, model)
             
@@ -831,7 +894,8 @@ def _run_non_interactive_mode(app: TermExtractionApp, args):
             args.file, 
             chunk_size=chunk_size if args.chunk_size else None,
             use_smart_splitter=True,
-            overlap_size=TEXT_SPLITTING["default_overlap_size"]
+            overlap_size=TEXT_SPLITTING["default_overlap_size"],
+            enable_ocr=app.enable_ocr  # 使用app的OCR配置
         )
         print(f"✅ 从文件加载了 {len(texts)} 个文本")
     except Exception as e:
