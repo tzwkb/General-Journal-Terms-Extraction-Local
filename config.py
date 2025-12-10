@@ -13,11 +13,11 @@ from typing import List, Dict, Any
 # =============================================================================
 
 # OpenAI API配置
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-mU6afVlo8m1nykBk6c8f7f0496574eF8B13584EaB885346d")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.ai-gaochao.cn/v1")
 
 # 模型配置
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "gpt-5"
 
 # =============================================================================
 # 模型API参数兼容性配置
@@ -64,34 +64,6 @@ BATCH_CONFIG = {
 }
 
 # =============================================================================
-# PDF OCR处理配置 - 科大讯飞
-# =============================================================================
-
-PDF_OCR_CONFIG = {
-    "batch_threshold_pages": 10,  # 超过多少页时启用分批处理（降低阈值以避免内存问题）
-    "batch_threshold_mb": 10,     # 超过多少MB时启用分批处理（降低阈值）
-    "batch_size": 10,              # 每批处理的页数（降低到3页以提高稳定性，避免内存溢出）
-    "enable_batch_processing": True,  # 是否启用分批处理功能
-    "max_retries": 3,             # 单个批次失败时的最大重试次数
-    "retry_delay": 2,             # 重试之间的延迟（秒）
-}
-
-# 科大讯飞OCR配置
-XUNFEI_OCR_CONFIG = {
-    # 从环境变量读取，或在这里直接设置（不推荐）
-    "app_id": os.getenv("XUNFEI_APP_ID", "your-xunfei-app-id"),  # 讯飞开放平台AppID
-    "secret": os.getenv("XUNFEI_SECRET", "your-xunfei-secret"),  # 讯飞开放平台Secret
-    
-    # OCR任务配置
-    "export_format": "txt",  # 导出格式：txt, word, markdown, json
-    "max_wait_time": 300,    # 最大等待时间（秒）
-    "check_interval": 5,     # 状态检查间隔（秒）
-    
-    # 是否启用OCR功能
-    "enabled": True,  # True=启用科大讯飞OCR, False=禁用
-}
-
-# =============================================================================
 # 提示词配置
 # =============================================================================
 
@@ -100,80 +72,53 @@ EXTRACTION_MODE = {
     "bilingual": True,  # True=双语模式, False=单语模式（可在运行时修改）
 }
 
-# 系统提示词
-SYSTEM_PROMPT = """You are a senior scientific terminology extraction specialist with extensive expertise in academic journals, research publications, and multilingual scholarly terminology. Your mission is to extract precise bilingual keyword pairs from scientific literature across all disciplines, building comprehensive terminology databases that reflect the actual keywords used by researchers and authors."""
+SYSTEM_PROMPT = """
+You are a precise keyword extraction system. Your task is to extract ONLY the bilingual term pairs from the "关键词" (Chinese keywords) and "Keywords" (English keywords) sections of academic papers. Ignore all other content including abstracts, body text, references, etc.
+"""
 
 def get_user_prompt(text: str, bilingual: bool = True) -> str:
     """
-    生成用户提示词模板（支持单语/双语模式）
-    
-    Args:
-        text: 占位符，实际使用时会被替换为真实文本
-        bilingual: True=双语模式, False=单语模式
-        
-    Returns:
-        str: 格式化的用户提示词模板
+    Modified version: Extracts only from keyword sections
     """
     if bilingual:
-        # 双语模式 - 适用于科学期刊关键词提取
-        return f"""Extract bilingual keyword terminology pairs from scientific journal articles.
+        # Use regular string (not f-string) to avoid processing {text} placeholder
+        return """
+Your response must contain only a JSON object with no additional text.
 
-DOCUMENT STRUCTURE:
-- Scientific journal articles with keyword sections
-- Common formats:
-  * "关键词: 术语1; 术语2; 术语3" / "Keywords: term1; term2; term3"
-  * "关键词：术语1，术语2，术语3" / "Keywords: term1, term2, term3"
-  * Keywords may appear in abstract, header, or dedicated section
-- Keywords represent core concepts, methods, or subject areas of the research
+Task: Extract ONLY the bilingual term pairs from the keyword sections:
+- Find the "关键词" section (Chinese keywords)
+- Find the "Keywords" section (English keywords)
+- Match corresponding terms between both sections
+- Ignore all other content (abstract, body, references, etc.)
 
-EXTRACTION RULES:
-- **PRIMARY SOURCE**: Extract terms from "关键词/Keywords" sections (highest priority)
-- **SECONDARY SOURCE**: Extract key technical terms from title, abstract, or main text
-- Match Chinese and English keyword pairs based on position, context, and semantic equivalence
-- Preserve original terminology exactly as authored
-- Include compound terms and multi-word expressions
-- Handle various separators: semicolons (;), commas (，,), pipes (|)
-- Cross-disciplinary: medicine, engineering, physics, biology, computer science, social sciences, etc.
-- Focus on domain-specific technical terms, methodologies, and core concepts
-
-JSON OUTPUT:
-{{{{
+Output format - a JSON object with one field "terms" containing an array:
+{{
   "terms": [
-    {{{{
-      "eng_term": "English keyword",
-      "zh_term": "中文关键词"
-    }}}}
+    {{"eng_term": "English keyword", "zh_term": "中文关键词"}},
+    {{"eng_term": "another keyword", "zh_term": "另一个关键词"}}
   ]
-}}}}
+}}
 
-TEXT TO PROCESS:
-{text}"""
+Text to analyze:
+{text}
+"""
     else:
-        # 单语模式 - 提取单一语言关键词
-        return f"""Extract keyword terminology from scientific journal articles.
+        return """
+Your response must contain only a JSON object with no additional text.
 
-DOCUMENT FORMAT: Academic journal article with keyword section.
+Task: Extract ONLY terms from the "Keywords" or "关键词" section. Ignore all other content.
 
-EXTRACTION RULES:
-- **PRIMARY SOURCE**: Extract from "Keywords/关键词" section
-- **SECONDARY SOURCE**: Extract key technical terms from title, abstract, or text
-- Preserve original terminology exactly as authored
-- Include compound terms and multi-word expressions
-- Handle separators: semicolons (;), commas (，,), pipes (|)
-- All scientific disciplines accepted
-- Focus on domain-specific technical terms and core concepts
-
-JSON OUTPUT:
-{{{{
+Output format - a JSON object with one field "terms" containing an array:
+{{
   "terms": [
-    {{{{
-      "term": "Keyword term"
-    }}}}
+    {{"term": "keyword1"}},
+    {{"term": "keyword2"}}
   ]
-}}}}
+}}
 
-TEXT TO PROCESS:
-{text}"""
+Text to analyze:
+{text}
+"""
 
 
 # =============================================================================
@@ -276,13 +221,18 @@ FILE_PROCESSING = {
 # =============================================================================
 
 LOGGING_CONFIG = {
-    "level": "INFO",
+    "level": "INFO",  # 日志级别: DEBUG/INFO/WARNING/ERROR (调试时可改为DEBUG)
     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file_enabled": True,  # 是否启用文件日志
+    "console_enabled": True,  # 是否启用控制台输出
     "file_rotation": {
         "max_bytes": 10 * 1024 * 1024,  # 10MB
         "backup_count": 5
     }
 }
+
+# 快速切换到DEBUG模式（开发/调试时取消下面的注释）
+# LOGGING_CONFIG["level"] = "DEBUG"
 
 # =============================================================================
 # 验证和工具函数

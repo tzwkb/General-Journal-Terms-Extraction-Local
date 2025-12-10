@@ -13,7 +13,6 @@ from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from checkpoint_manager import CheckpointManager
 
 try:
     from openai import OpenAI
@@ -26,35 +25,27 @@ except ImportError:
 class GPTProcessor:
     """OpenAI GPT批处理处理器"""
     
-    def __init__(self, 
-                 api_key: str, 
-                 base_url: str = "https://api.openai.com/v1", 
-                 base_dir: str = "batch_results",
-                 enable_checkpoint: bool = True,
-                 checkpoint_dir: str = "checkpoints"):
+    def __init__(self,
+                 api_key: str,
+                 base_url: str = "https://api.openai.com/v1",
+                 base_dir: str = "batch_results"):
         """
         初始化批处理器
-        
+
         Args:
             api_key: OpenAI API密钥
             base_url: API端点URL
             base_dir: 结果存储目录
-            enable_checkpoint: 是否启用断点功能
-            checkpoint_dir: 断点文件目录
         """
         self.client = OpenAI(
-            api_key=api_key, 
+            api_key=api_key,
             base_url=base_url,
             timeout=60.0,  # 设置60秒超时
             max_retries=3   # 最大重试3次
         )
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True)
-        
-        # 初始化断点管理器
-        self.enable_checkpoint = enable_checkpoint
-        self.checkpoint_manager = CheckpointManager(checkpoint_dir) if enable_checkpoint else None
-        
+
         # 配置日志和并发控制
         self._setup_logging()
         self._setup_concurrency_control()
@@ -65,16 +56,27 @@ class GPTProcessor:
     
     def _setup_logging(self):
         """设置日志配置"""
+        from config import LOGGING_CONFIG
+
         log_file = self.base_dir / "gpt_processor.log"
+
+        # 获取配置的日志级别
+        log_level = getattr(logging, LOGGING_CONFIG.get("level", "INFO").upper())
+
+        handlers = []
+        if LOGGING_CONFIG.get("file_enabled", True):
+            handlers.append(logging.FileHandler(log_file, encoding='utf-8'))
+        if LOGGING_CONFIG.get("console_enabled", True):
+            handlers.append(logging.StreamHandler())
+
         logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file, encoding='utf-8'),
-                logging.StreamHandler()
-            ]
+            level=log_level,
+            format=LOGGING_CONFIG.get("format", '%(asctime)s - %(name)s - %(levelname)s - %(message)s'),
+            handlers=handlers,
+            force=True  # 强制重新配置日志系统
         )
         self.logger = logging.getLogger(__name__)
+        self.logger.info(f"📋 日志级别: {LOGGING_CONFIG.get('level', 'INFO')}")
     
     def _setup_concurrency_control(self):
         """设置并发控制"""
@@ -151,8 +153,11 @@ class GPTProcessor:
                 return self._process_api_response(response, custom_id, model, source_file)
                 
             except Exception as e:
-                self.logger.error(f"❌ {custom_id} 处理失败: {e}")
-                return self._create_error_result(custom_id, model, source_file, str(e))
+                import traceback
+                error_details = f"{type(e).__name__}: {str(e)}"
+                self.logger.error(f"❌ {custom_id} 处理失败: {error_details}")
+                self.logger.debug(f"完整错误堆栈: {traceback.format_exc()}")
+                return self._create_error_result(custom_id, model, source_file, error_details)
     
     def _build_api_params(self, system_prompt: str, user_prompt_template: str, text: str, 
                          model: str, temperature: float, max_tokens: int) -> Dict[str, Any]:
@@ -178,57 +183,109 @@ class GPTProcessor:
     
     def _process_api_response(self, response, custom_id: str, model: str, source_file: str) -> Dict[str, Any]:
         """处理API响应"""
-        # 处理不同类型的响应
-        if isinstance(response, str):
-            content = response
-            usage_info = {"total_tokens": 0}
-            model_name = model
-        else:
-            content = response.choices[0].message.content
-            usage_info = {
-                "total_tokens": response.usage.total_tokens if response.usage else 0,
-                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "completion_tokens": response.usage.completion_tokens if response.usage else 0
+        try:
+            # 处理不同类型的响应
+            if isinstance(response, str):
+                content = response
+                usage_info = {"total_tokens": 0}
+                model_name = model
+            else:
+                content = response.choices[0].message.content
+                usage_info = {
+                    "total_tokens": response.usage.total_tokens if response.usage else 0,
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else 0
+                }
+                model_name = response.model
+
+            # 记录原始响应内容用于调试
+            self.logger.debug(f"{custom_id} 原始API响应: {content[:500]}")
+
+            # 解析JSON响应
+            extracted_terms = self._parse_json_response(content)
+
+            result = {
+                "custom_id": custom_id,
+                "extracted_terms": extracted_terms,
+                "usage": usage_info,
+                "model": model_name,
+                "source_file": source_file,
+                "created": int(time.time())
             }
-            model_name = response.model
-        
-        # 解析JSON响应
-        extracted_terms = self._parse_json_response(content)
-        
-        result = {
-            "custom_id": custom_id,
-            "extracted_terms": extracted_terms,
-            "usage": usage_info,
-            "model": model_name,
-            "source_file": source_file,
-            "created": int(time.time())
-        }
-        
-        self.logger.info(f"✅ {custom_id} 处理完成: {usage_info.get('total_tokens', 0)} tokens")
-        return result
+
+            self.logger.info(f"✅ {custom_id} 处理完成: {usage_info.get('total_tokens', 0)} tokens")
+            return result
+
+        except Exception as e:
+            import traceback
+            self.logger.error(f"❌ {custom_id} 响应处理失败: {type(e).__name__}: {str(e)}")
+            self.logger.debug(f"完整错误堆栈: {traceback.format_exc()}")
+            # 返回错误结果而不是抛出异常
+            return self._create_error_result(custom_id, model, source_file, f"响应处理失败: {type(e).__name__}: {str(e)}")
     
     def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """解析JSON响应内容"""
         try:
-            # 尝试查找JSON块
-            json_start = content.find('{')
-            if json_start == -1:
-                json_start = content.find('[')
-            
-            if json_start != -1:
-                json_end = content.rfind('}')
-                if json_end == -1:
-                    json_end = content.rfind(']')
-                if json_end != -1:
-                    content = content[json_start:json_end+1].strip()
-                else:
-                    # 如果找不到结束符，从开始符到最后
-                    json_end = content.rfind('}')
-                    if json_end != -1:
-                        content = content[json_start:json_end].strip()
-            
-            return json.loads(content)
-        except json.JSONDecodeError:
+            # 尝试直接解析（处理干净的JSON响应）
+            parsed = json.loads(content)
+
+            # 如果解析成功但返回的是字符串而不是对象，尝试再次解析
+            if isinstance(parsed, str):
+                self.logger.warning(f"API返回了JSON字符串而不是对象，尝试再次解析: {parsed[:100]}")
+                parsed = json.loads(parsed)
+
+            # 验证返回的是字典类型
+            if not isinstance(parsed, dict):
+                self.logger.warning(f"API返回了非字典类型: {type(parsed)}, 内容: {str(parsed)[:200]}")
+                return {"raw_content": str(parsed)}
+
+            # 验证是否包含terms字段
+            if "terms" not in parsed:
+                self.logger.warning(f"API响应缺少'terms'字段，返回的字段: {list(parsed.keys())}")
+                # 如果响应中只有一个键，且其值是列表，可能就是terms
+                if len(parsed) == 1:
+                    single_key = list(parsed.keys())[0]
+                    if isinstance(parsed[single_key], list):
+                        self.logger.info(f"将字段'{single_key}'作为terms处理")
+                        return {"terms": parsed[single_key]}
+                # 否则将整个响应包装为raw_content
+                return {"raw_content": str(parsed)}
+
+            return parsed
+
+        except json.JSONDecodeError as e:
+            # JSON解析失败，尝试提取JSON块
+            self.logger.warning(f"初始JSON解析失败: {str(e)}, 尝试提取JSON块")
+
+            try:
+                # 尝试查找JSON对象或数组
+                json_start = content.find('{')
+                if json_start == -1:
+                    json_start = content.find('[')
+
+                if json_start != -1:
+                    # 查找对应的结束符
+                    if content[json_start] == '{':
+                        json_end = content.rfind('}')
+                    else:
+                        json_end = content.rfind(']')
+
+                    if json_end != -1 and json_end > json_start:
+                        extracted = content[json_start:json_end+1].strip()
+                        self.logger.info(f"提取的JSON块: {extracted[:200]}...")
+                        return json.loads(extracted)
+
+                # 如果提取失败，记录详细错误
+                self.logger.error(f"无法从响应中提取有效JSON，原始内容: {content[:500]}")
+                return {"raw_content": content}
+
+            except Exception as ex:
+                self.logger.error(f"JSON块提取失败: {type(ex).__name__}: {str(ex)}")
+                return {"raw_content": content}
+
+        except Exception as e:
+            # 捕获所有其他异常
+            self.logger.error(f"JSON解析时发生意外错误: {type(e).__name__}: {str(e)}, 内容: {content[:500]}")
             return {"raw_content": content}
     
     def _create_error_result(self, custom_id: str, model: str, source_file: str, error_msg: str) -> Dict[str, Any]:
@@ -320,12 +377,12 @@ class GPTProcessor:
         
         return future_to_id
     
-    def _collect_batch_results(self, future_to_id: Dict, total_count: int, 
+    def _collect_batch_results(self, future_to_id: Dict, total_count: int,
                               model: str, source_files: List[str]) -> List[Dict[str, Any]]:
         """收集批处理结果"""
         results = []
         completed_count = 0
-        
+
         for future in as_completed(future_to_id):
             custom_id = future_to_id[future]
             try:
@@ -333,32 +390,14 @@ class GPTProcessor:
                 results.append(result)
                 completed_count += 1
                 self.logger.info(f"📊 进度: {completed_count}/{total_count} 完成")
-                
-                # 更新断点状态 - 成功
-                text_index = int(custom_id.split('-')[-1]) - 1
-                source_file = source_files[text_index] if source_files and text_index < len(source_files) else f"text_{text_index+1}.txt"
-                self.update_text_processing_status(
-                    text_index=text_index,
-                    source_file=source_file,
-                    status='completed',
-                    result_data=result
-                )
-                
+
             except Exception as e:
                 self.logger.error(f"❌ {custom_id} 处理异常: {e}")
                 # 添加错误结果
                 text_index = int(custom_id.split('-')[-1]) - 1
                 source_file = source_files[text_index] if source_files and text_index < len(source_files) else f"text_{text_index+1}.txt"
                 results.append(self._create_error_result(custom_id, model, source_file, str(e)))
-                
-                # 更新断点状态 - 失败
-                self.update_text_processing_status(
-                    text_index=text_index,
-                    source_file=source_file,
-                    status='failed',
-                    error_message=str(e)
-                )
-        
+
         return results
     
     # =============================================================================
@@ -1083,99 +1122,6 @@ class GPTProcessor:
             return "zh-CN"  # 默认中文
     
     # =============================================================================
-    # 断点续传功能
-    # =============================================================================
-    
-    def create_processing_checkpoint(self, 
-                                   texts: List[str],
-                                   source_files: List[str],
-                                   processing_config: Dict[str, Any]) -> Optional[str]:
-        """
-        创建处理断点
-        
-        Args:
-            texts: 文本列表
-            source_files: 源文件列表
-            processing_config: 处理配置
-            
-        Returns:
-            str: 断点ID，如果未启用断点则返回None
-        """
-        if not self.enable_checkpoint or not self.checkpoint_manager:
-            return None
-        
-        try:
-            # 创建虚拟文件列表（基于文本内容）
-            virtual_files = []
-            for i, text in enumerate(texts):
-                source_file = source_files[i] if i < len(source_files) else f"text_{i+1}.txt"
-                virtual_files.append(f"virtual_text_{i}_{source_file}")
-            
-            checkpoint_id = self.checkpoint_manager.create_checkpoint(
-                files=virtual_files,
-                processing_config=processing_config,
-                output_directory=str(self.base_dir)
-            )
-            
-            self.logger.info(f"创建处理断点: {checkpoint_id}")
-            return checkpoint_id
-            
-        except Exception as e:
-            self.logger.error(f"创建断点失败: {e}")
-            return None
-    
-    def update_text_processing_status(self, 
-                                    text_index: int,
-                                    source_file: str,
-                                    status: str,
-                                    result_data: Optional[Dict] = None,
-                                    error_message: Optional[str] = None):
-        """
-        更新文本处理状态
-        
-        Args:
-            text_index: 文本索引
-            source_file: 源文件名
-            status: 处理状态
-            result_data: 结果数据
-            error_message: 错误信息
-        """
-        if not self.enable_checkpoint or not self.checkpoint_manager:
-            return
-        
-        try:
-            virtual_file = f"virtual_text_{text_index}_{source_file}"
-            self.checkpoint_manager.update_file_status(
-                file_path=virtual_file,
-                status=status,
-                result_data=result_data,
-                error_message=error_message
-            )
-        except Exception as e:
-            self.logger.warning(f"更新断点状态失败: {e}")
-    
-    def list_available_checkpoints(self) -> List[Dict[str, Any]]:
-        """列出可用的断点"""
-        if not self.enable_checkpoint or not self.checkpoint_manager:
-            return []
-        
-        return self.checkpoint_manager.list_checkpoints()
-    
-    def load_checkpoint_for_resume(self, checkpoint_id: str) -> bool:
-        """加载断点用于续传"""
-        if not self.enable_checkpoint or not self.checkpoint_manager:
-            return False
-        
-        return self.checkpoint_manager.load_checkpoint(checkpoint_id)
-    
-    def get_checkpoint_progress(self) -> Optional[Dict[str, Any]]:
-        """获取当前断点的进度信息"""
-        if not self.enable_checkpoint or not self.checkpoint_manager:
-            return None
-        
-        return self.checkpoint_manager.get_processing_progress()
-    
-    # =============================================================================
     # 完整处理流程
     # =============================================================================
     
@@ -1207,41 +1153,26 @@ class GPTProcessor:
             Dict[str, Any]: 包含处理结果的字典
         """
         self.logger.info("🚀 开始术语抽取流程")
-        
-        # 创建处理断点
-        processing_config = {
-            "model": model,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "max_concurrent": max_concurrent,
-            "description": description
-        }
-        
-        checkpoint_id = self.create_processing_checkpoint(
-            texts=texts,
-            source_files=source_files or [],
-            processing_config=processing_config
-        )
-        
+
         try:
             # 步骤1: 并发处理所有文本
             results = self._run_concurrent_processing(
-                texts, system_prompt, user_prompt_template, model, 
+                texts, system_prompt, user_prompt_template, model,
                 temperature, max_tokens, max_concurrent, source_files
             )
-            
+
             # 步骤2: 保存原始结果
             raw_file = self._save_raw_results(results)
-            
+
             # 步骤3: 术语去重处理
             merged_results = self._run_deduplication(results)
-            
+
             return {
                 "raw_results": results,
                 "merged_results": merged_results,
                 "raw_file": raw_file
             }
-            
+
         except Exception as e:
             self.logger.error(f"❌ 抽取流程执行失败: {e}")
             raise
@@ -1276,27 +1207,11 @@ class GPTProcessor:
             Dict[str, str]: 包含各个文件路径的字典
         """
         self.logger.info("🚀 开始完整GPT批处理流程")
-        
-        # 创建处理断点
-        processing_config = {
-            "model": model,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "max_concurrent": max_concurrent,
-            "description": description,
-            "output_format": output_format
-        }
-        
-        checkpoint_id = self.create_processing_checkpoint(
-            texts=texts,
-            source_files=source_files or [],
-            processing_config=processing_config
-        )
-        
+
         try:
             # 步骤1: 并发处理所有文本
             results = self._run_concurrent_processing(
-                texts, system_prompt, user_prompt_template, model, 
+                texts, system_prompt, user_prompt_template, model,
                 temperature, max_tokens, max_concurrent, source_files
             )
             
@@ -1389,30 +1304,28 @@ def _save_intermediate_text(file_path: str, text: str):
     except Exception as e:
         print(f"⚠️  保存中间文本失败: {e}")
 
-def load_texts_from_file(file_path: str, 
+def load_texts_from_file(file_path: str,
                         chunk_size: Optional[int] = None,
                         use_smart_splitter: bool = True,
-                        overlap_size: int = 200,
-                        enable_ocr: bool = True) -> List[str]:
+                        overlap_size: int = 200) -> List[str]:
     """
     从文件加载文本并进行智能分割
-    
+
     Args:
         file_path: 文件路径
         chunk_size: 分块大小（字符数），None表示不分块
         use_smart_splitter: 是否使用智能分割器
         overlap_size: 重叠大小（字符数）
-        enable_ocr: 是否启用OCR功能（用于扫描版PDF和图片）
-        
+
     Returns:
         分割后的文本列表
     """
     from file_processor import FileProcessor
     from text_splitter import TextSplitter
     import os
-    
+
     # 加载文件内容
-    processor = FileProcessor(enable_ocr=enable_ocr)
+    processor = FileProcessor()
     
     try:
         if file_path.endswith('.pdf'):

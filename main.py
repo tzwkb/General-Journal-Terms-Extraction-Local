@@ -30,8 +30,6 @@ class TermExtractionApp:
     def __init__(self):
         self.api_key = None
         self.processor = None
-        self.enable_ocr = True  # 默认启用OCR
-        self.use_gpu = False    # 默认不使用GPU
         
     # =============================================================================
     # API密钥管理
@@ -130,63 +128,6 @@ class TermExtractionApp:
         
         print(f"✅ 使用 {len(sample_texts)} 个示例文本")
         return sample_texts
-    
-    # =============================================================================
-    # OCR配置
-    # =============================================================================
-    
-    def configure_ocr(self) -> Tuple[bool, bool]:
-        """
-        配置OCR选项
-        
-        Returns:
-            Tuple[bool, bool]: (enable_ocr, use_gpu)
-        """
-        print("\n🔧 OCR功能配置")
-        print("=" * 50)
-        
-        # 检查OCR是否可用
-        try:
-            from file_processor import deps
-            ocr_available = deps.is_available('ocr')
-        except:
-            ocr_available = False
-        
-        if not ocr_available:
-            print("⚠️  科大讯飞OCR未配置，OCR功能不可用")
-            print("💡 提示: 若需要处理扫描版PDF，请:")
-            print("   1. 安装依赖: pip install requests")
-            print("   2. 在config.py中配置讯飞API密钥")
-            print("\n将使用纯文本提取模式（仅支持可复制的PDF）")
-            return False, False
-        
-        print("✅ 科大讯飞OCR已配置，可使用OCR功能")
-        print("\n📋 OCR功能说明:")
-        print("  • 启用OCR: 可处理扫描版PDF文件")
-        print("  • 禁用OCR: 仅提取可复制文本的PDF/DOCX")
-        print("  • 推荐: 对于标准文档（GB/T标准等），启用OCR以兼容扫描版")
-        print("  • 注意: 当前仅支持PDF格式的OCR识别")
-        
-        while True:
-            choice = input("\n是否启用OCR功能? (Y/n, 默认Y): ").strip().lower()
-            
-            if choice in ['', 'y', 'yes', '是']:
-                enable_ocr = True
-                print("✅ 已启用OCR功能")
-                break
-            elif choice in ['n', 'no', '否']:
-                enable_ocr = False
-                print("ℹ️  已禁用OCR功能")
-                return False, False
-            else:
-                print("❌ 无效输入，请输入 y 或 n")
-        
-        # 科大讯飞OCR是云端API，不需要GPU配置
-        use_gpu = False  # 云端API不需要本地GPU
-        
-        print(f"\n📊 OCR配置完成: 启用科大讯飞云端OCR")
-        print("ℹ️  说明: 科大讯飞OCR使用云端API，无需本地GPU配置")
-        return enable_ocr, use_gpu
     
     # =============================================================================
     # 文件处理
@@ -442,20 +383,19 @@ class TermExtractionApp:
         )
     
     def _process_single_file_content(
-        self, 
-        file_path: Path, 
-        chunk_size: Optional[int], 
-        use_smart_splitter: bool, 
+        self,
+        file_path: Path,
+        chunk_size: Optional[int],
+        use_smart_splitter: bool,
         overlap_size: int
     ) -> List[str]:
         """处理单个文件内容"""
         try:
             texts = load_texts_from_file(
-                str(file_path), 
+                str(file_path),
                 chunk_size=chunk_size,
                 use_smart_splitter=use_smart_splitter,
-                overlap_size=overlap_size,
-                enable_ocr=self.enable_ocr
+                overlap_size=overlap_size
             )
             
             # 智能分割器已经在内部添加了文件标识，这里不需要重复添加
@@ -622,19 +562,18 @@ class TermExtractionApp:
         return source_files
     
     def run_batch_processing(
-        self, 
-        texts: List[str], 
+        self,
+        texts: List[str],
         model: str,
         bilingual: bool = True
     ) -> Optional[dict]:
-        """运行批处理（不包含输出格式，只进行抽取）"""
+        """运行批处理（不包含输出格式,只进行抽取）"""
         if not self.processor:
             # 获取base_url配置
             base_url = os.getenv("OPENAI_BASE_URL", OPENAI_BASE_URL)
             self.processor = GPTProcessor(
-                api_key=self.api_key, 
-                base_url=base_url,
-                enable_checkpoint=True  # 启用断点功能
+                api_key=self.api_key,
+                base_url=base_url
             )
         
         print(f"\n🚀 开始批处理任务")
@@ -670,123 +609,6 @@ class TermExtractionApp:
             return None
     
     # =============================================================================
-    # 断点续传功能
-    # =============================================================================
-    
-    def check_and_handle_checkpoints(self) -> bool:
-        """
-        检查和处理断点续传
-        
-        Returns:
-            bool: 如果处理了断点续传则返回True
-        """
-        try:
-            from checkpoint_manager import CheckpointManager
-            checkpoint_manager = CheckpointManager()
-            checkpoints = checkpoint_manager.list_checkpoints()
-            
-            if not checkpoints:
-                return False
-            
-            # 过滤未完成的断点
-            incomplete_checkpoints = [cp for cp in checkpoints if not cp.get('is_completed', False)]
-            
-            if not incomplete_checkpoints:
-                return False
-            
-            print(f"\n🔄 发现 {len(incomplete_checkpoints)} 个未完成的处理任务")
-            print("💡 提示: 如果文件内容已更改，建议选择'删除所有并开始新任务'")
-            print("\n请选择操作：")
-            
-            for i, cp in enumerate(incomplete_checkpoints, 1):
-                progress = cp.get('progress', '0/0')
-                create_time = cp.get('create_time', '')[:16]  # 只显示日期和时间
-                print(f"  {i}. 恢复任务 (创建: {create_time}, 进度: {progress})")
-            
-            print(f"  {len(incomplete_checkpoints) + 1}. 跳过，开始新任务")
-            print(f"  {len(incomplete_checkpoints) + 2}. 删除所有checkpoint并开始新任务")
-            
-            while True:
-                try:
-                    choice = input(f"\n请选择 (1-{len(incomplete_checkpoints) + 2}): ").strip()
-                    choice_num = int(choice)
-                    
-                    if choice_num == len(incomplete_checkpoints) + 1:
-                        print("⏭️  跳过checkpoint检查，开始新任务")
-                        return False  # 跳过，开始新任务
-                    
-                    if choice_num == len(incomplete_checkpoints) + 2:
-                        # 删除所有checkpoint
-                        print("🗑️  正在删除所有checkpoint...")
-                        import shutil
-                        checkpoint_dir = Path("checkpoints")
-                        if checkpoint_dir.exists():
-                            for file in checkpoint_dir.glob("*.json"):
-                                file.unlink()
-                        print("✅ 已删除所有checkpoint，开始新任务")
-                        return False
-                    
-                    if 1 <= choice_num <= len(incomplete_checkpoints):
-                        selected_checkpoint = incomplete_checkpoints[choice_num - 1]
-                        return self.resume_from_checkpoint(selected_checkpoint['checkpoint_id'])
-                    
-                    print("❌ 无效选择，请重试")
-                    
-                except (ValueError, KeyboardInterrupt):
-                    print("\n❌ 输入无效或用户取消")
-                    return False
-                    
-        except ImportError:
-            # 断点功能不可用
-            return False
-        except Exception as e:
-            print(f"⚠️  检查断点时出错: {e}")
-            return False
-    
-    def resume_from_checkpoint(self, checkpoint_id: str) -> bool:
-        """
-        从断点恢复处理
-        
-        Args:
-            checkpoint_id: 断点ID
-            
-        Returns:
-            bool: 是否成功恢复
-        """
-        try:
-            print(f"\n🔄 正在恢复断点: {checkpoint_id}")
-            
-            # 初始化处理器（启用断点功能）
-            base_url = os.getenv("OPENAI_BASE_URL", OPENAI_BASE_URL)
-            processor = GPTProcessor(
-                api_key=self.api_key, 
-                base_url=base_url,
-                enable_checkpoint=True
-            )
-            
-            # 加载断点
-            if not processor.load_checkpoint_for_resume(checkpoint_id):
-                print("❌ 加载断点失败")
-                return False
-            
-            # 获取断点信息
-            progress = processor.get_checkpoint_progress()
-            if progress:
-                print(f"📊 断点状态: {progress['completed_files']}/{progress['total_files']} 已完成")
-                print(f"📈 进度: {progress['progress_percentage']:.1f}%")
-            
-            # 这里需要实现实际的恢复逻辑
-            # 由于断点系统比较复杂，这里先显示信息
-            print("⚠️  断点恢复功能正在开发中...")
-            print("💡 您可以选择跳过，开始新任务")
-            
-            return False
-            
-        except Exception as e:
-            print(f"❌ 恢复断点失败: {e}")
-            return False
-    
-    # =============================================================================
     # 主程序流程
     # =============================================================================
     
@@ -794,48 +616,41 @@ class TermExtractionApp:
         """运行主程序"""
         print("🎉 欢迎使用OpenAI GPT批处理术语抽取工具!")
         print("=" * 50)
-        
+
         # 1. 设置API密钥
         if not self.setup_api_key():
             return
-        
+
         print("✅ API密钥设置成功")
-        
-        # 2. 配置OCR选项
-        self.enable_ocr, self.use_gpu = self.configure_ocr()
-        
-        # 3. 检查断点续传
-        if self.check_and_handle_checkpoints():
-            return
-        
-        # 4. 选择提取模式（单语/双语）- 在获取文本之前选择
+
+        # 2. 选择提取模式（单语/双语）
         bilingual = self.select_extraction_mode()
-        
-        # 5. 获取输入文本
+
+        # 3. 获取输入文本
         texts = self.get_input_texts()
         if not texts:
             print("❌ 没有输入文本，程序退出")
             return
-        
-        # 6. 选择模型
+
+        # 4. 选择模型
         model = self.select_model()
         print(f"✅ 选择模型: {model}")
-        
-        # 7. 运行批处理（只进行抽取，不保存最终结果）
+
+        # 5. 运行批处理（只进行抽取，不保存最终结果）
         results = self.run_batch_processing(texts, model, bilingual)
-        
+
         if results:
-            # 8. 抽取完成后，选择输出格式并支持重复选择
+            # 6. 抽取完成后，选择输出格式并支持重复选择
             source_files = self._extract_source_files(texts)
             generated_files = self.handle_output_generation(results, source_files, model)
-            
+
             if generated_files:
                 print(f"\n🎉 所有处理完成!")
                 print(f"📁 文件保存位置: batch_results/ 目录")
                 print(f"📊 共生成 {len(generated_files)} 个文件")
             else:
                 print("⚠️  未生成任何输出文件")
-            
+
         else:
             print("❌ 批处理失败")
 
@@ -891,11 +706,10 @@ def _run_non_interactive_mode(app: TermExtractionApp, args):
         # 使用默认配置：智能分割，如果没有指定chunk_size则按段落处理
         chunk_size = args.chunk_size or TEXT_SPLITTING["default_chunk_size"]
         texts = load_texts_from_file(
-            args.file, 
+            args.file,
             chunk_size=chunk_size if args.chunk_size else None,
             use_smart_splitter=True,
-            overlap_size=TEXT_SPLITTING["default_overlap_size"],
-            enable_ocr=app.enable_ocr  # 使用app的OCR配置
+            overlap_size=TEXT_SPLITTING["default_overlap_size"]
         )
         print(f"✅ 从文件加载了 {len(texts)} 个文本")
     except Exception as e:
