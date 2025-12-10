@@ -13,8 +13,8 @@ from typing import List, Dict, Any
 # =============================================================================
 
 # OpenAI API配置
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-mU6afVlo8m1nykBk6c8f7f0496574eF8B13584EaB885346d")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.ai-gaochao.cn/v1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 
 # 模型配置
 DEFAULT_MODEL = "gpt-5"
