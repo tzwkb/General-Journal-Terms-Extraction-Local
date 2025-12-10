@@ -6,7 +6,6 @@
 
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![OpenAI GPT-5](https://img.shields.io/badge/OpenAI-GPT--4-green.svg)](https://openai.com/)
-[![讯飞OCR](https://img.shields.io/badge/讯飞OCR-云端API-orange.svg)](https://www.xfyun.cn/)
 
 </div>
 
