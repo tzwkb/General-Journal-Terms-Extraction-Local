@@ -82,7 +82,7 @@ class LLMProcessor:
         """设置并发控制"""
         # 降低并发数以减少连接问题
         self.semaphore = threading.Semaphore(5)  # 最大5个并发请求
-        self.logger.info("GPT处理器初始化完成")
+        self.logger.info("LLM处理器初始化完成")
     
     # =============================================================================
     # Token计算
@@ -1383,4 +1383,4 @@ def load_texts_from_file(file_path: str,
 
 if __name__ == "__main__":
     # 简单测试
-    print("GPT处理器模块加载成功")
+    print("LLM处理器模块加载成功")
