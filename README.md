@@ -1,14 +1,14 @@
-# Journal Term Extractor
+# Term Extractor
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-OpenAI GPT-powered bilingual terminology extraction prototype for journal articles.
+OpenAI LLM-powered bilingual terminology extraction prototype for journal articles.
 
 ## Features
 
 - **Text Splitting** — Intelligent chunking for large documents
-- **GPT Processing** — Leverages OpenAI API for accurate term recognition
+- **LLM Processing** — Leverages OpenAI API for accurate term recognition
 - **Batch Processing** — Handle multiple files in one run
 - **Multi-format Input** — Supports PDF text extraction and plain text
 - **Configurable Prompts** — Customizable system and user prompts via `config.py`
@@ -47,7 +47,7 @@ Follow the interactive prompts to select input files and extraction options.
 ```
 .
 ├── main.py           # Entry point
-├── gpt_processor.py  # Core GPT interaction logic
+├── llm_processor.py  # Core LLM interaction logic
 ├── config.py         # API keys and prompts
 ├── file_processor.py # Input file handling
 └── text_splitter.py  # Document chunking utility
