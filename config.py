@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-OpenAI GPT批处理术语抽取配置文件
+OpenAI LLM批处理术语抽取配置文件
 包含API配置、模型参数、处理配置和提示词设置
 """
 
