@@ -10,48 +10,48 @@ LLM-powered bilingual terminology extraction prototype for articles and document
 - **Text Splitting** — Intelligent chunking for large documents
 - **LLM Processing** — Leverages OpenAI API for accurate term recognition
 - **Batch Processing** — Handle multiple files in one run
-- **Multi-format Input** — Supports PDF text extraction and plain text
+- **Multi-format Input** — Supports PDF, DOCX, and plain text
 - **Configurable Prompts** — Customizable system and user prompts via config.py
 
 ## Installation
 
-`ash
+```bash
 pip install -r requirements.txt
-`
+```
 
 ## Configuration
 
-Edit config.py to set your OpenAI API key and adjust batch settings:
+Edit `config.py` to set your OpenAI API key:
 
-`python
+```python
 OPENAI_API_KEY = "your-openai-api-key"
 OPENAI_BASE_URL = "https://api.openai.com/v1"
-`
+```
 
 Or set via environment variable:
 
-`ash
+```bash
 export OPENAI_API_KEY="your-key"
-`
+```
 
 ## Usage
 
-`ash
-python main.py
-`
-
-Follow the interactive prompts to select input files and extraction options.
+```bash
+python main.py --file input.txt --format json
+python main.py --file input.pdf --format csv --bilingual
+python main.py --monolingual --model gpt-4o
+```
 
 ## Project Structure
 
-`
+```
 .
 ├── main.py           # Entry point
 ├── llm_processor.py  # Core LLM interaction logic
 ├── config.py         # API keys and prompts
 ├── file_processor.py # Input file handling
 └── text_splitter.py  # Document chunking utility
-`
+```
 
 ## License
 
